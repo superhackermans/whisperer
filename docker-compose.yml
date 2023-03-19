@@ -1,0 +1,8 @@
+services:
+  claude:
+    build: .
+    volumes:
+      - ~/.claude:/home/claude/.claude
+      - .:/app
+    stdin_open: true
+    tty: true
