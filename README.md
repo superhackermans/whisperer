@@ -4,16 +4,6 @@ Local voice-to-text for macOS using [whisper.cpp](https://github.com/ggerganov/w
 
 All processing happens on-device. No data leaves your machine.
 
-## Why
-
-Built-in dictation mangles technical terms. Whisper running locally handles them well:
-
-| Source | Transcription |
-|--------|--------------|
-| Original | Popular Linux distributions include Debian, Fedora Linux, and Ubuntu. You can use windowing systems such as X11 or Wayland with a desktop environment like KDE Plasma. |
-| iPhone dictation | Popular Linux distributions include Debby and Fed or Linux, and do Bantu. You can use windowing systems such as X eleven or Weiland with a desktop environment like KD plasma. |
-| **Whisperer** | Popular Linux distributions include Debian, Fedora, Linux, and Ubuntu. You can use windowing systems such as X11 or Wayland with a desktop environment like KDE Plasma. |
-
 ## Installation
 
 ### Prerequisites
