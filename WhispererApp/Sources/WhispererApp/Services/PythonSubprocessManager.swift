@@ -92,12 +92,18 @@ final class PythonSubprocessManager {
         // Working directory is the bridge script's directory so imports work
         process.currentDirectoryURL = URL(fileURLWithPath: bridgePath).deletingLastPathComponent()
 
-        // Environment
+        // Environment — Finder launches have minimal PATH, so ensure common paths are included
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
-        // Append common paths to PATH (after existing entries so
-        // conda/venv environments take priority)
-        let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extraPaths = [
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "/usr/bin",
+            "\(home)/miniconda3/bin",
+            "\(home)/anaconda3/bin",
+            "\(home)/miniforge3/bin",
+        ]
         let currentPath = env["PATH"] ?? "/usr/bin:/bin"
         let existing = currentPath.split(separator: ":").map(String.init)
         let toAdd = extraPaths.filter { !existing.contains($0) }
@@ -178,9 +184,16 @@ final class PythonSubprocessManager {
     }
 
     private func findBridgeScript() -> String {
-        // Search upward from the executable location until we find swift_bridge.py.
-        // This handles both SPM (.build/arm64-apple-macosx/debug/WhispererApp)
-        // and .app bundle (WhispererApp.app/Contents/MacOS/WhispererApp) layouts.
+        // 1. Check inside the .app bundle's Resources (Finder launch)
+        if let resourceURL = Bundle.main.resourceURL {
+            let bundled = resourceURL.appendingPathComponent("swift_bridge.py").path
+            if FileManager.default.fileExists(atPath: bundled) {
+                NSLog("[Whisperer] Found swift_bridge.py in bundle Resources: %@", bundled)
+                return bundled
+            }
+        }
+
+        // 2. Walk upward from the executable (terminal/SPM development launch)
         let startURL: URL
         if let execURL = Bundle.main.executableURL {
             startURL = execURL.deletingLastPathComponent()
@@ -189,24 +202,27 @@ final class PythonSubprocessManager {
         }
 
         var dir = startURL
-        for _ in 0..<10 {  // walk up at most 10 levels
+        for _ in 0..<10 {
             let candidate = dir.appendingPathComponent("swift_bridge.py").path
             if FileManager.default.fileExists(atPath: candidate) {
+                NSLog("[Whisperer] Found swift_bridge.py walking up from executable: %@", candidate)
                 return candidate
             }
             let parent = dir.deletingLastPathComponent()
-            if parent.path == dir.path { break }  // reached filesystem root
+            if parent.path == dir.path { break }
             dir = parent
         }
 
-        // Also check current working directory
+        // 3. Check current working directory
         let cwdCandidate = FileManager.default.currentDirectoryPath + "/swift_bridge.py"
         if FileManager.default.fileExists(atPath: cwdCandidate) {
+            NSLog("[Whisperer] Found swift_bridge.py in cwd: %@", cwdCandidate)
             return cwdCandidate
         }
 
         // Last resort — caller will get a "file not found" from Python
-        NSLog("[Whisperer] swift_bridge.py not found searching upward from %@", startURL.path)
+        NSLog("[Whisperer] swift_bridge.py NOT FOUND — searched bundle Resources, walked up from %@, checked cwd %@",
+              startURL.path, FileManager.default.currentDirectoryPath)
         return "swift_bridge.py"
     }
 

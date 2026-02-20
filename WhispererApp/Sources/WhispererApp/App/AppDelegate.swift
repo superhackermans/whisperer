@@ -33,14 +33,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerIconDefaults()
         setupStatusItem()
         setupSubprocess()
-        setupHotkeyManager()
         setupNotificationObservers()
         observeState()
 
-        // Hide Dock icon after status item is set up
-        DispatchQueue.main.async {
-            NSApp.setActivationPolicy(.accessory)
+        // Set up hotkeys — may show Accessibility alert.
+        // Delay .accessory switch until after any alerts are dismissed
+        // so the user can interact with them (no Dock icon = no way back).
+        let hotkeyOK = setupHotkeyManager()
+
+        if hotkeyOK {
+            // No alert needed — safe to hide from Dock immediately
+            DispatchQueue.main.async {
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
+        // If !hotkeyOK, the alert handler switches to .accessory after dismissal
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -203,34 +210,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Hotkey Manager
 
-    private func setupHotkeyManager() {
+    /// Returns true if hotkeys started successfully, false if Accessibility denied.
+    @discardableResult
+    private func setupHotkeyManager() -> Bool {
         let config = HotkeyConfig.load()
         let manager = HotkeyManager(appState: appState, config: config) { [weak self] command in
             self?.subprocessManager.sendCommand(command)
         }
 
-        if !manager.start() {
+        let ok = manager.start()
+        hotkeyManager = manager
+
+        if !ok {
+            // Show alert on next run loop tick so the window is fully set up.
+            // Keep app visible in Dock until the alert is dismissed.
             DispatchQueue.main.async { [weak self] in
                 self?.showAccessibilityAlert()
             }
         }
 
-        hotkeyManager = manager
+        return ok
     }
 
     private func showAccessibilityAlert() {
+        // Bring app to front so alert is visible
+        NSApp.activate(ignoringOtherApps: true)
+
         let alert = NSAlert()
         alert.messageText = "Accessibility Permission Required"
-        alert.informativeText = "Whisperer needs Accessibility access to detect global hotkeys. Please grant access in System Settings > Privacy & Security > Accessibility."
+        alert.informativeText = "Whisperer needs Accessibility access to detect global hotkeys.\n\nGrant access in System Settings > Privacy & Security > Accessibility, then relaunch."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
 
-        if alert.runModal() == .alertFirstButtonReturn {
+        let response = alert.runModal()
+
+        if response == .alertFirstButtonReturn {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)
             }
         }
+
+        // Now safe to hide from Dock
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // MARK: - Actions

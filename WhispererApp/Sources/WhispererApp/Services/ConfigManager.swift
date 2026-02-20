@@ -9,13 +9,24 @@ final class ConfigManager: ObservableObject {
     private let configDir: String
     private let configPath: String
 
-    /// Python interpreter path (Swift-only setting, stored in UserDefaults)
+    /// Python interpreter path (Swift-only setting, stored in UserDefaults).
+    /// Auto-detected on first use and persisted so Finder launches reuse the same path.
     var pythonPath: String {
         get {
             let stored = UserDefaults.standard.string(forKey: "pythonPath") ?? ""
-            if !stored.isEmpty { return stored }
-            // Auto-detect
-            return Self.findPython()
+            if !stored.isEmpty {
+                // Verify stored path still exists
+                if FileManager.default.isExecutableFile(atPath: stored) {
+                    return stored
+                }
+                NSLog("[Whisperer] Stored pythonPath '%@' no longer exists — re-detecting", stored)
+                UserDefaults.standard.removeObject(forKey: "pythonPath")
+            }
+            // Auto-detect and persist for future launches (including Finder)
+            let found = Self.findPython()
+            UserDefaults.standard.set(found, forKey: "pythonPath")
+            NSLog("[Whisperer] Persisted pythonPath to UserDefaults: %@", found)
+            return found
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "pythonPath")
@@ -134,14 +145,14 @@ final class ConfigManager: ObservableObject {
 
     // MARK: - Python Detection
 
-    /// Find a python3 interpreter that has pyyaml installed by probing each candidate.
+    /// Find a python3 interpreter that has the required packages installed.
     ///
     /// Searches two sources:
     /// 1. The process's inherited PATH (has conda/venv when launched from terminal)
     /// 2. Well-known locations (covers Finder launches where PATH is minimal)
     ///
-    /// Each candidate is tested by running `python3 -c "import yaml"`.
-    /// The first one that succeeds is returned.
+    /// Each candidate is tested by running a quick import check.
+    /// The first one that succeeds is returned and persisted to UserDefaults.
     static func findPython() -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
 
@@ -161,7 +172,7 @@ final class ConfigManager: ObservableObject {
             }
         }
 
-        // 2. Well-known locations (covers GUI launches where PATH is minimal)
+        // 2. Well-known locations (covers Finder/GUI launches where PATH is minimal)
         let knownPaths = [
             // Conda (default install locations)
             "\(home)/miniconda3/bin/python3",
@@ -185,10 +196,41 @@ final class ConfigManager: ObservableObject {
             addCandidate(path)
         }
 
+        // 3. Python.org framework installs (common on macOS, not in PATH from Finder)
+        let frameworkBase = "/Library/Frameworks/Python.framework/Versions"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: frameworkBase) {
+            // Sort descending so newer versions are tried first
+            for ver in versions.sorted().reversed() {
+                if ver == "Current" { continue }
+                addCandidate("\(frameworkBase)/\(ver)/bin/python3")
+            }
+        }
+
         NSLog("[Whisperer] Python candidates (%d): %@",
               candidates.count, candidates.joined(separator: ", "))
 
-        // Test each candidate: can it import yaml?
+        // Test each candidate: can it import the required packages?
+        for python in candidates {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: python)
+            proc.arguments = ["-c", "import yaml, numpy, pyaudio, pyperclip"]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                if proc.terminationStatus == 0 {
+                    NSLog("[Whisperer] Found working Python with all deps: %@", python)
+                    return python
+                } else {
+                    NSLog("[Whisperer] %@ missing deps (exit %d)", python, proc.terminationStatus)
+                }
+            } catch {
+                NSLog("[Whisperer] %@ failed to launch: %@", python, error.localizedDescription)
+            }
+        }
+
+        // Fallback: try yaml-only (user may have partial install)
         for python in candidates {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: python)
@@ -199,18 +241,13 @@ final class ConfigManager: ObservableObject {
                 try proc.run()
                 proc.waitUntilExit()
                 if proc.terminationStatus == 0 {
-                    NSLog("[Whisperer] Found working Python with yaml: %@", python)
+                    NSLog("[Whisperer] Found Python with yaml (partial deps): %@", python)
                     return python
-                } else {
-                    NSLog("[Whisperer] %@ cannot import yaml (exit %d)", python, proc.terminationStatus)
                 }
-            } catch {
-                NSLog("[Whisperer] %@ failed to launch: %@", python, error.localizedDescription)
-            }
+            } catch {}
         }
 
-        // Nothing has yaml — return first candidate and let error propagate clearly
-        NSLog("[Whisperer] WARNING: No Python with pyyaml found. Install with: pip install pyyaml")
+        NSLog("[Whisperer] WARNING: No Python with required packages found")
         return candidates.first ?? "/usr/bin/python3"
     }
 }

@@ -2,6 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
+PROJECT_ROOT="$(cd .. && pwd)"
 
 # Generate app icon if it doesn't exist
 if [ ! -f "AppIcon.icns" ] && [ ! -f "AppIcon.png" ]; then
@@ -31,6 +32,24 @@ mkdir -p "$APP/Contents/Resources"
 # Copy executable
 cp "$EXEC" "$APP/Contents/MacOS/WhispererApp"
 
+# Bundle Python bridge scripts and dependencies
+echo "=== Bundling Python files ==="
+for pyfile in swift_bridge.py core.py config.py phrases.py; do
+    if [ -f "$PROJECT_ROOT/$pyfile" ]; then
+        cp "$PROJECT_ROOT/$pyfile" "$APP/Contents/Resources/$pyfile"
+        echo "  Bundled $pyfile"
+    else
+        echo "  WARNING: $pyfile not found at $PROJECT_ROOT/$pyfile"
+    fi
+done
+
+# Bundle sound assets
+if [ -d "$PROJECT_ROOT/assets/Sounds" ]; then
+    mkdir -p "$APP/Contents/Resources/assets/Sounds"
+    cp "$PROJECT_ROOT/assets/Sounds/"* "$APP/Contents/Resources/assets/Sounds/" 2>/dev/null || true
+    echo "  Bundled assets/Sounds/"
+fi
+
 # Copy app icon if available
 ICON_FILE=""
 if [ -f "AppIcon.icns" ]; then
@@ -41,7 +60,7 @@ elif [ -f "AppIcon.png" ]; then
     ICON_FILE="AppIcon"
 fi
 
-# Create Info.plist — LSUIElement makes it a menu-bar-only app (no Dock icon)
+# Create Info.plist
 cat > "$APP/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -61,11 +80,6 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
-    <!-- LSUIElement removed for diagnostic — app will show in Dock -->
-    <!-- Once menu bar icon is confirmed working, re-enable with:
-    <key>LSUIElement</key>
-    <true/>
-    -->
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSMicrophoneUsageDescription</key>
@@ -84,6 +98,16 @@ cat >> "$APP/Contents/Info.plist" << 'PLIST'
 </dict>
 </plist>
 PLIST
+
+# Ad-hoc code sign with entitlements (required for Accessibility, Launch at Login)
+echo "=== Code signing ==="
+if [ -f "WhispererApp.entitlements" ]; then
+    codesign --force --sign - --entitlements WhispererApp.entitlements "$APP"
+    echo "  Signed with entitlements"
+else
+    codesign --force --sign - "$APP"
+    echo "  Signed (ad-hoc, no entitlements file)"
+fi
 
 echo "=== .app bundle created at $APP ==="
 echo "=== Launching (stdout/stderr shown here) ==="
