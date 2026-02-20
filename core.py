@@ -142,6 +142,10 @@ class WhispererCore:
         debug=False,
         cleanup_recordings=True,
         enable_beeps=True,
+        enable_start_sound=True,
+        enable_stop_sound=True,
+        enable_error_sound=True,
+        sound_volume=50,
         on_error=None,
         on_transcribing=None,
         on_transcription_done=None,
@@ -153,6 +157,10 @@ class WhispererCore:
         self.debug = debug
         self.cleanup_recordings = cleanup_recordings
         self.enable_beeps = enable_beeps
+        self.enable_start_sound = enable_start_sound
+        self.enable_stop_sound = enable_stop_sound
+        self.enable_error_sound = enable_error_sound
+        self.sound_volume = sound_volume
         self.models = models or {
             "tiny.en": (0, 1.5),
             "base.en": (1.5, 3),
@@ -233,10 +241,11 @@ class WhispererCore:
                 self.log_debug(f"[sound] Sound file not found: {sound_path}")
             return
         if self.debug:
-            self.log_debug(f"[sound] Playing {os.path.basename(sound_path)}")
+            self.log_debug(f"[sound] Playing {os.path.basename(sound_path)} at volume {self.sound_volume}")
+        vol = max(0, min(100, self.sound_volume))
         threading.Thread(
             target=lambda: subprocess.run(
-                ["afplay", "-v", str(_SOUND_VOLUME / 100), sound_path],
+                ["afplay", "-v", str(vol / 100), sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             ),
@@ -244,13 +253,22 @@ class WhispererCore:
         ).start()
 
     def _beep_start(self):
-        self._play_sound(_SOUND_START)
+        if self.enable_start_sound:
+            self._play_sound(_SOUND_START)
+        elif self.debug:
+            self.log_debug("[sound] Start sound disabled")
 
     def _beep_stop(self):
-        self._play_sound(_SOUND_STOP)
+        if self.enable_stop_sound:
+            self._play_sound(_SOUND_STOP)
+        elif self.debug:
+            self.log_debug("[sound] Stop sound disabled")
 
     def _beep_error(self):
-        self._play_sound(_SOUND_ERROR)
+        if self.enable_error_sound:
+            self._play_sound(_SOUND_ERROR)
+        elif self.debug:
+            self.log_debug("[sound] Error sound disabled")
 
     # ----------------------------------------------------------- callbacks
     def _notify_error(self, title, message):
@@ -290,11 +308,13 @@ class WhispererCore:
         """Begin recording. Returns immediately; audio capture runs in a new thread."""
         with self._lock:
             if self._recording:
-                self.log_debug("[record] start_recording called but already recording — ignoring")
+                self.log(f"start_recording: ALREADY RECORDING — ignoring (use_large={use_large_model})")
                 return
-        if self.debug:
-            self.log_debug(f"[record] start_recording(use_large_model={use_large_model}, "
-                           f"keep_punctuation={keep_punctuation})")
+            # Set _recording immediately so stop_recording() can find it.
+            # Without this, a quick "stop" arriving before the thread initialises
+            # PyAudio would see _recording=False and be silently ignored.
+            self._recording = True
+            self.log(f"start_recording: _recording=True (use_large={use_large_model}, keep_punct={keep_punctuation})")
         self._beep_start()
         t = threading.Thread(
             target=self._record_audio,
@@ -302,36 +322,38 @@ class WhispererCore:
             daemon=True,
         )
         t.start()
-        if self.debug:
-            self.log_debug(f"[record] Recording thread started (thread={t.name})")
+        self.log(f"start_recording: thread spawned (name={t.name})")
 
     def stop_recording(self):
         """Signal the recording thread to stop."""
         with self._lock:
             if self._recording:
                 self.log("Stopping recording...")
+                self.log("stop_recording: _recording -> False")
                 self._recording = False
                 self._beep_stop()
             else:
-                self.log_debug("[record] stop_recording called but not recording — ignoring")
+                self.log("stop_recording: NOT recording — ignoring")
 
     def _record_audio(self, use_large_model, keep_punctuation):
         """Internal: capture audio until ``_recording`` is cleared."""
-        t_start = time.time() if self.debug else 0
+        t_start = time.time()
 
-        if self.debug:
-            self.log_debug(f"[record] _record_audio starting on thread {threading.current_thread().name}")
+        self.log(f"_record_audio: thread={threading.current_thread().name}, _recording={self.is_recording}")
 
         try:
             audio = self._get_audio()
         except Exception as e:
             self._notify_error("Recording failed", f"Could not initialise PyAudio: {e}")
             self.log_exception("PyAudio init")
+            with self._lock:
+                self._recording = False
+            self.log("_record_audio: PyAudio init failed, _recording=False")
+            self._signal_done_if_needed()
             return
 
-        if self.debug:
-            self.log_debug(f"[record] Opening stream: format={FORMAT}, channels={CHANNELS}, "
-                           f"rate={RATE}, chunk={CHUNK}")
+        self.log_debug(f"[record] Opening stream: format={FORMAT}, channels={CHANNELS}, "
+                       f"rate={RATE}, chunk={CHUNK}")
         try:
             stream = audio.open(
                 format=FORMAT,
@@ -343,11 +365,26 @@ class WhispererCore:
         except Exception as e:
             self._notify_error("Recording failed", f"Could not open microphone: {e}")
             self.log_exception("open stream")
+            with self._lock:
+                self._recording = False
+            self.log("_record_audio: stream open failed, _recording=False")
+            self._signal_done_if_needed()
             return
 
+        # _recording was already set True by start_recording(); just clear frames.
         with self._lock:
-            self._recording = True
+            still_recording = self._recording
             self._frames = []
+
+        if not still_recording:
+            self.log("_record_audio: _recording already False (stop arrived during init) — exiting immediately")
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+            self._signal_done_if_needed()
+            return
 
         self.log("Recording started.")
         if self.debug:
@@ -381,19 +418,36 @@ class WhispererCore:
         except Exception:
             pass
 
-        if self.debug:
-            t_elapsed = time.time() - t_start
-            self.log_debug(f"[record] Recording loop finished: {len(frames)} frames, "
-                           f"{t_elapsed:.3f}s wall time, {read_errors} read errors")
+        t_elapsed = time.time() - t_start
+        self.log(f"_record_audio: loop done — {len(frames)} frames, "
+                 f"{t_elapsed:.3f}s, {read_errors} errors, _recording={self.is_recording}")
 
-        self._process_frames(frames, use_large_model, keep_punctuation)
+        queued = self._process_frames(frames, use_large_model, keep_punctuation)
+        self.log(f"_record_audio: _process_frames returned queued={queued}")
+        if not queued:
+            # Nothing was queued for transcription (no frames, too short, or WAV error).
+            # Fire on_transcription_done so the Swift side recovers from .recording state.
+            self.log("_record_audio: nothing queued — firing TRANSCRIPTION_DONE for recovery")
+            self._signal_done_if_needed()
+
+    def _signal_done_if_needed(self):
+        """Fire on_transcription_done if set (used for early-exit paths)."""
+        if self._on_transcription_done:
+            self.log_debug("[callback] Firing on_transcription_done (early exit)")
+            try:
+                self._on_transcription_done()
+            except Exception:
+                self.log_exception("on_transcription_done callback")
 
     # -------------------------------------------------------- frame handling
     def _process_frames(self, frames, use_large_model, keep_punctuation):
-        """Save captured frames to a WAV and enqueue for transcription."""
+        """Save captured frames to a WAV and enqueue for transcription.
+
+        Returns True if work was queued, False otherwise.
+        """
         if not frames:
             self.log_debug("[frames] No frames captured — nothing to process")
-            return
+            return False
 
         duration = (len(frames) * CHUNK) / RATE
 
@@ -406,7 +460,7 @@ class WhispererCore:
             self.log(f"Recording too short ({duration:.2f}s). Skipping.")
             if self.debug:
                 self.log_debug(f"[frames] Rejected: {duration:.3f}s <= 0.2s minimum")
-            return
+            return False
 
         # Pad very short recordings to 1.5s (whisper minimum).
         # Only pad at end — front-padding creates silence that triggers
@@ -438,7 +492,7 @@ class WhispererCore:
         except Exception as e:
             self._notify_error("Recording failed", f"Could not save audio: {e}")
             self.log_exception("write WAV")
-            return
+            return False
 
         padded_duration = (len(frames) * CHUNK) / RATE
         self.log(f"Saved: {fname} ({duration:.2f}s, padded to {padded_duration:.2f}s)")
@@ -450,6 +504,7 @@ class WhispererCore:
                            f"(queue depth before: {self._audio_queue.qsize()})")
 
         self._audio_queue.put((fname, padded_duration, use_large_model, keep_punctuation))
+        return True
 
     # ------------------------------------------------------- transcription
     def _select_model(self, duration, use_large_model):
@@ -502,6 +557,7 @@ class WhispererCore:
                         "Transcription failed",
                         f"No model found for duration {duration:.2f}s",
                     )
+                    self._signal_done_if_needed()
                     continue
 
                 model_path = os.path.join(
@@ -512,6 +568,7 @@ class WhispererCore:
                         "Model not found",
                         f"Missing model file: {model_path}",
                     )
+                    self._signal_done_if_needed()
                     continue
 
                 if self.debug:
@@ -559,6 +616,7 @@ class WhispererCore:
                     )
                     self.log(f"stderr: {stderr_text}")
                     self._cleanup(fname, fname + ".txt")
+                    self._signal_done_if_needed()
                     continue
 
                 output_file = fname + ".txt"
@@ -567,6 +625,7 @@ class WhispererCore:
                         "Transcription failed",
                         f"Output file not found: {output_file}",
                     )
+                    self._signal_done_if_needed()
                     continue
 
                 with open(output_file) as f:
@@ -641,11 +700,11 @@ class WhispererCore:
 
             except Exception:
                 self.log_exception("transcription loop")
+                self._signal_done_if_needed()
 
     def _paste_text(self, text):
         """Copy *text* to the clipboard and paste via Cmd+V with retry."""
-        if self.debug:
-            self.log_debug(f"[paste] Copying {len(text)} chars to clipboard")
+        self.log(f"_paste_text: copying {len(text)} chars to clipboard")
         pyperclip.copy(text)
         self.log("Copied to clipboard.")
 

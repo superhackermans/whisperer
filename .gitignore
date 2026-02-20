@@ -162,3 +162,8 @@ nohup.out
 
 # Claude Code
 .claude/
+
+# Swift build artifacts
+WhispererApp/.build/
+WhispererApp/.swiftpm/
+WhispererApp/WhispererApp.app/

@@ -21,6 +21,10 @@ DEFAULT_CONFIG = {
         "small.en": [3, 999999],
     },
     "enable_beeps": True,
+    "enable_start_sound": True,
+    "enable_stop_sound": True,
+    "enable_error_sound": True,
+    "sound_volume": 50,
     "cleanup_recordings": True,
     "debug": False,
 }
@@ -95,11 +99,18 @@ def load_config(debug_log=None):
             debug_log(f"[config] No config file at {CONFIG_PATH} — creating defaults")
         save_config(config)
 
-    # Convert model ranges from lists to tuples
+    # Convert model ranges from lists to tuples of floats.
+    # Yams (Swift YAML library) writes 0.0 as "0e+0" which PyYAML may
+    # parse as a string instead of a float. Force float() conversion.
     models = {}
     for name, val in config["models"].items():
-        if isinstance(val, list) and len(val) == 2:
-            models[name] = tuple(val)
+        if isinstance(val, (list, tuple)) and len(val) == 2:
+            try:
+                models[name] = (float(val[0]), float(val[1]))
+            except (ValueError, TypeError):
+                if debug_log:
+                    debug_log(f"[config] WARNING: bad range for {name}: {val} — treating as manual-only")
+                models[name] = None
         else:
             models[name] = val
     config["models"] = models
