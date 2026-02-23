@@ -28,6 +28,11 @@ struct PreferencesWindow: View {
                     Label("Appearance", systemImage: "paintbrush")
                 }
 
+            PreferencesVocabularyView(configManager: configManager)
+                .tabItem {
+                    Label("Vocabulary", systemImage: "character.book.closed")
+                }
+
             PreferencesAdvancedView(
                 configManager: configManager,
                 launchAtLoginManager: launchAtLoginManager
@@ -36,6 +41,6 @@ struct PreferencesWindow: View {
                     Label("Advanced", systemImage: "wrench.and.screwdriver")
                 }
         }
-        .frame(width: 580, height: 500)
+        .frame(width: 700, height: 520)
     }
 }

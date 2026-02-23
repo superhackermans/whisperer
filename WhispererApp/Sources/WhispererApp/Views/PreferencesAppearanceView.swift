@@ -14,79 +14,76 @@ struct PreferencesAppearanceView: View {
     private static let errorOptions = ["exclamationmark.triangle", "xmark.circle", "waveform.badge.exclamationmark", "mic.slash"]
 
     var body: some View {
-        ScrollView {
-            Form {
-                Section(header: Text("Notifications").font(.headline)) {
-                    Toggle("Show notification when transcription completes", isOn: $notificationsEnabled)
-                }
-
-                Section(header: Text("Sounds").font(.headline)) {
-                    Toggle("Enable sound effects", isOn: $configManager.config.enableBeeps)
-
-                    if configManager.config.enableBeeps {
-                        Toggle("Start recording sound", isOn: $configManager.config.enableStartSound)
-                            .padding(.leading, 16)
-                        Toggle("Stop recording sound", isOn: $configManager.config.enableStopSound)
-                            .padding(.leading, 16)
-                        Toggle("Error sound", isOn: $configManager.config.enableErrorSound)
-                            .padding(.leading, 16)
-
-                        HStack {
-                            Text("Volume")
-                            Slider(
-                                value: Binding(
-                                    get: { Double(configManager.config.soundVolume) },
-                                    set: { configManager.config.soundVolume = Int($0) }
-                                ),
-                                in: 0...100,
-                                step: 5
-                            )
-                            Text("\(configManager.config.soundVolume)%")
-                                .frame(width: 40, alignment: .trailing)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                    }
-
-                    Button("Apply Sound Settings") {
-                        configManager.saveConfig()
-                        if let delegate = NSApp.delegate as? AppDelegate {
-                            delegate.restartSubprocess()
-                        }
-                    }
-                    .font(.caption)
-                }
-
-                Section(header: Text("Menu Bar Icons").font(.headline)) {
-                    Text("Choose an icon for each app state:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    iconPickerRow(label: "Idle", selection: $iconIdle, options: Self.idleOptions)
-                    iconPickerRow(label: "Recording", selection: $iconRecording, options: Self.recordingOptions)
-                    iconPickerRow(label: "Transcribing", selection: $iconTranscribing, options: Self.transcribingOptions)
-                    iconPickerRow(label: "Error", selection: $iconError, options: Self.errorOptions)
-                }
-
-                Section {
-                    Button("Reset Icons to Defaults") {
-                        iconIdle = AppDelegate.defaultIconIdle
-                        iconRecording = AppDelegate.defaultIconRecording
-                        iconTranscribing = AppDelegate.defaultIconTranscribing
-                        iconError = AppDelegate.defaultIconError
-                        notifyIconChange()
-                    }
-                }
+        Form {
+            Section("Notifications") {
+                Toggle("Show notification when transcription completes", isOn: $notificationsEnabled)
             }
-            .padding()
+
+            Section("Sounds") {
+                Toggle("Enable sound effects", isOn: $configManager.config.enableBeeps)
+
+                if configManager.config.enableBeeps {
+                    Toggle("Start recording sound", isOn: $configManager.config.enableStartSound)
+                        .padding(.leading, 20)
+                    Toggle("Stop recording sound", isOn: $configManager.config.enableStopSound)
+                        .padding(.leading, 20)
+                    Toggle("Error sound", isOn: $configManager.config.enableErrorSound)
+                        .padding(.leading, 20)
+
+                    HStack {
+                        Text("Volume")
+                        Slider(
+                            value: Binding(
+                                get: { Double(configManager.config.soundVolume) },
+                                set: { configManager.config.soundVolume = Int($0) }
+                            ),
+                            in: 0...100,
+                            step: 5
+                        )
+                        Text("\(configManager.config.soundVolume)%")
+                            .frame(width: 40, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+                }
+
+                Button("Apply Sound Settings") {
+                    configManager.saveConfig()
+                    if let delegate = NSApp.delegate as? AppDelegate {
+                        delegate.restartSubprocess()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            Section {
+                iconPickerRow(label: "Idle", selection: $iconIdle, options: Self.idleOptions)
+                iconPickerRow(label: "Recording", selection: $iconRecording, options: Self.recordingOptions)
+                iconPickerRow(label: "Transcribing", selection: $iconTranscribing, options: Self.transcribingOptions)
+                iconPickerRow(label: "Error", selection: $iconError, options: Self.errorOptions)
+
+                Button("Reset Icons to Defaults") {
+                    iconIdle = AppDelegate.defaultIconIdle
+                    iconRecording = AppDelegate.defaultIconRecording
+                    iconTranscribing = AppDelegate.defaultIconTranscribing
+                    iconError = AppDelegate.defaultIconError
+                    notifyIconChange()
+                }
+            } header: {
+                Text("Menu Bar Icons")
+            } footer: {
+                Text("Choose an icon for each app state. Changes apply immediately.")
+            }
         }
+        .formStyle(.grouped)
     }
 
     private func iconPickerRow(label: String, selection: Binding<String>, options: [String]) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             Text(label)
-                .frame(width: 90, alignment: .leading)
+                .frame(width: 100, alignment: .leading)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(options, id: \.self) { symbol in
                     Button(action: {
                         selection.wrappedValue = symbol
@@ -94,13 +91,13 @@ struct PreferencesAppearanceView: View {
                     }) {
                         Image(systemName: symbol)
                             .font(.title3)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 36, height: 36)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(selection.wrappedValue == symbol ? Color.accentColor.opacity(0.2) : Color.clear)
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selection.wrappedValue == symbol ? Color.accentColor.opacity(0.15) : Color.clear)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: 8)
                                     .stroke(selection.wrappedValue == symbol ? Color.accentColor : Color.clear, lineWidth: 2)
                             )
                     }

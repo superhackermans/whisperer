@@ -8,44 +8,53 @@ struct PreferencesAdvancedView: View {
     @State private var launchAtLogin: Bool = false
 
     var body: some View {
-        Form {
-            Section(header: Text("Launch").font(.headline)) {
-                Toggle("Open at Login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { newValue in
-                        if newValue {
-                            launchAtLoginManager.enable()
-                        } else {
-                            launchAtLoginManager.disable()
+        VStack(spacing: 0) {
+            Form {
+                Section("Launch") {
+                    Toggle("Open at Login", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { newValue in
+                            if newValue {
+                                launchAtLoginManager.enable()
+                            } else {
+                                launchAtLoginManager.disable()
+                            }
+                        }
+                }
+
+                Section {
+                    HStack {
+                        TextField("Python interpreter path", text: $pythonPathText)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Detect") {
+                            pythonPathText = ConfigManager.findPython()
                         }
                     }
-            }
-
-            Section(header: Text("Python").font(.headline)) {
-                HStack {
-                    TextField("Python interpreter:", text: $pythonPathText)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Detect") {
-                        pythonPathText = ConfigManager.findPython()
+                    LabeledContent("Current") {
+                        Text(configManager.pythonPath)
+                            .foregroundColor(.secondary)
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
+                } header: {
+                    Text("Python")
                 }
-                Text("Current: \(configManager.pythonPath)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
 
-            Section(header: Text("Log File").font(.headline)) {
-                let logPath = "~/whisperer_debug.log"
-                HStack {
-                    Text(logPath)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("Reveal in Finder") {
-                        let expanded = NSString(string: logPath).expandingTildeInPath
-                        NSWorkspace.shared.selectFile(expanded, inFileViewerRootedAtPath: "")
+                Section("Log File") {
+                    let logPath = "~/whisperer_debug.log"
+                    HStack {
+                        Text(logPath)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Reveal in Finder") {
+                            let expanded = NSString(string: logPath).expandingTildeInPath
+                            NSWorkspace.shared.selectFile(expanded, inFileViewerRootedAtPath: "")
+                        }
                     }
                 }
             }
+            .formStyle(.grouped)
 
             HStack {
                 Spacer()
@@ -57,10 +66,12 @@ struct PreferencesAdvancedView: View {
                         delegate.restartSubprocess()
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return)
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
-        .padding()
         .onAppear {
             pythonPathText = configManager.pythonPath
             launchAtLogin = launchAtLoginManager.isEnabled

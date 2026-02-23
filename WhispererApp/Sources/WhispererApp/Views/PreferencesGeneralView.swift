@@ -4,38 +4,42 @@ struct PreferencesGeneralView: View {
     @ObservedObject var configManager: ConfigManager
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    TextField("whisper.cpp path:", text: $configManager.config.whispercppFolder)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Browse...") {
-                        browseForFolder()
+        VStack(spacing: 0) {
+            Form {
+                Section("Whisper.cpp") {
+                    HStack {
+                        TextField("Path (auto-detected if empty)", text: $configManager.config.whispercppFolder)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Browse...") {
+                            browseForFolder()
+                        }
                     }
+
+                    TextField("Transcription prompt", text: $configManager.config.prompt)
+                        .textFieldStyle(.roundedBorder)
                 }
 
-                TextField("Prompt:", text: $configManager.config.prompt)
-                    .textFieldStyle(.roundedBorder)
+                Section("Options") {
+                    Toggle("Auto-delete recordings after transcription", isOn: $configManager.config.cleanupRecordings)
+                    Toggle("Debug logging", isOn: $configManager.config.debug)
+                }
             }
-
-            Section {
-                Toggle("Auto-delete recordings after transcription", isOn: $configManager.config.cleanupRecordings)
-                Toggle("Debug logging", isOn: $configManager.config.debug)
-            }
+            .formStyle(.grouped)
 
             HStack {
                 Spacer()
                 Button("Apply") {
                     configManager.saveConfig()
-                    // Subprocess restart is handled by the AppDelegate observing config changes
                     if let delegate = NSApp.delegate as? AppDelegate {
                         delegate.restartSubprocess()
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return)
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
-        .padding()
     }
 
     private func browseForFolder() {
