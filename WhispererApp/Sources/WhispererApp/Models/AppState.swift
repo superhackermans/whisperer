@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     @Published var lastTranscription: String?
     @Published var isSubprocessRunning: Bool = false
     @Published var hotkeysActive: Bool = false
+    @Published var microphoneGranted: Bool = true
     @Published var debugMessages: [String] = []
 
     /// Max debug messages to retain in memory

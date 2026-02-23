@@ -1,5 +1,6 @@
 import ApplicationServices
 import AppKit
+import AVFoundation
 import Combine
 import SwiftUI
 
@@ -14,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var hotkeyManager: HotkeyManager?
     private var subprocessManager: PythonSubprocessManager!
     private var accessibilityRetryTimer: Timer?
+    private var microphoneRetryTimer: Timer?
     private var bridgeReadyWatchdog: Timer?
 
     // MARK: - Icon UserDefaults Keys
@@ -45,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupNotificationObservers()
         observeState()
+
+        checkMicrophonePermission()
 
         let hotkeyOK = setupHotkeyManager()
         DiagnosticLog.log("Hotkey manager started: \(hotkeyOK ? "SUCCESS" : "FAILED (Accessibility denied)")")
@@ -78,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         accessibilityRetryTimer?.invalidate()
+        microphoneRetryTimer?.invalidate()
         bridgeReadyWatchdog?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
         hotkeyManager?.stop()
@@ -148,6 +153,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let grantItem = NSMenuItem(title: "Grant Accessibility Permission...", action: #selector(grantAccessibility), keyEquivalent: "")
             grantItem.target = self
             menu.addItem(grantItem)
+
+            let inputMonItem = NSMenuItem(title: "Grant Input Monitoring Permission...", action: #selector(grantInputMonitoring), keyEquivalent: "")
+            inputMonItem.target = self
+            menu.addItem(inputMonItem)
+        }
+
+        if !appState.microphoneGranted {
+            let micItem = NSMenuItem(title: "Microphone: Denied", action: nil, keyEquivalent: "")
+            micItem.isEnabled = false
+            menu.addItem(micItem)
+
+            let grantMicItem = NSMenuItem(title: "Grant Microphone Permission...", action: #selector(grantMicrophone), keyEquivalent: "")
+            grantMicItem.target = self
+            menu.addItem(grantMicItem)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -203,6 +222,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+
+        appState.$microphoneGranted
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.rebuildMenu()
+            }
+            .store(in: &cancellables)
     }
 
     private func updateIcon(for status: WhispererStatus) {
@@ -251,6 +277,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ok = setupHotkeyManager()
         if !ok {
             promptForAccessibilityAndRetry()
+        }
+    }
+
+    @objc private func grantMicrophone() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+        if microphoneRetryTimer == nil {
+            startMicrophoneRetryTimer()
+        }
+    }
+
+    @objc private func grantInputMonitoring() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -324,6 +365,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Microphone Permission
+
+    private func checkMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            DiagnosticLog.log("Microphone permission: authorized")
+            appState.microphoneGranted = true
+        case .notDetermined:
+            DiagnosticLog.log("Microphone permission: not determined — requesting")
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    self?.appState.microphoneGranted = granted
+                    DiagnosticLog.log("Microphone permission request result: \(granted)")
+                    self?.rebuildMenu()
+                    if !granted {
+                        self?.startMicrophoneRetryTimer()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            DiagnosticLog.log("Microphone permission: denied/restricted")
+            appState.microphoneGranted = false
+            startMicrophoneRetryTimer()
+        @unknown default:
+            break
+        }
+    }
+
+    private func startMicrophoneRetryTimer() {
+        microphoneRetryTimer?.invalidate()
+        microphoneRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+                DiagnosticLog.log("Microphone permission granted — updating state")
+                timer.invalidate()
+                self.microphoneRetryTimer = nil
+                self.appState.microphoneGranted = true
+                self.rebuildMenu()
+            }
+        }
+    }
+
     // MARK: - Startup Failure Alert
 
     private func showStartupFailureAlert() {
@@ -336,6 +422,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var details: [String] = []
         if !appState.hotkeysActive {
             details.append("Hotkeys: NOT WORKING (Accessibility permission needed)")
+        }
+        if !appState.microphoneGranted {
+            details.append("Microphone: DENIED (permission needed)")
         }
         if !appState.isSubprocessRunning {
             details.append("Python bridge: NOT RUNNING")
@@ -387,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 500),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -417,6 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         accessibilityRetryTimer?.invalidate()
+        microphoneRetryTimer?.invalidate()
         bridgeReadyWatchdog?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
         hotkeyManager?.stop()
