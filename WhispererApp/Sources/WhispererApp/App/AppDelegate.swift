@@ -1,3 +1,4 @@
+import ApplicationServices
 import AppKit
 import Combine
 import SwiftUI
@@ -12,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let launchAtLoginManager = LaunchAtLoginManager()
     private(set) var hotkeyManager: HotkeyManager?
     private var subprocessManager: PythonSubprocessManager!
+    private var accessibilityRetryTimer: Timer?
+    private var bridgeReadyWatchdog: Timer?
 
     // MARK: - Icon UserDefaults Keys
 
@@ -29,28 +32,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGPIPE, SIG_IGN)
+        DiagnosticLog.log("applicationDidFinishLaunching started")
 
         registerIconDefaults()
+        DiagnosticLog.log("Icon defaults registered")
+
         setupStatusItem()
+        DiagnosticLog.log("Status item created")
+
         setupSubprocess()
+        DiagnosticLog.log("Subprocess setup initiated")
+
         setupNotificationObservers()
         observeState()
 
-        // Set up hotkeys — may show Accessibility alert.
-        // Delay .accessory switch until after any alerts are dismissed
-        // so the user can interact with them (no Dock icon = no way back).
         let hotkeyOK = setupHotkeyManager()
+        DiagnosticLog.log("Hotkey manager started: \(hotkeyOK ? "SUCCESS" : "FAILED (Accessibility denied)")")
 
         if hotkeyOK {
-            // No alert needed — safe to hide from Dock immediately
             DispatchQueue.main.async {
                 NSApp.setActivationPolicy(.accessory)
+                DiagnosticLog.log("Switched to .accessory (menu bar only)")
+            }
+        } else {
+            // Show macOS's native Accessibility prompt and poll until granted
+            promptForAccessibilityAndRetry()
+        }
+
+        // Watchdog: if the Python bridge hasn't sent BRIDGE_READY within 15 seconds,
+        // show a visible alert so the user knows something is wrong.
+        bridgeReadyWatchdog = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.bridgeReadyWatchdog = nil
+            if !self.appState.isSubprocessRunning || self.appState.status != .idle {
+                DiagnosticLog.log("WATCHDOG: Bridge not ready after 15s — showing alert")
+                DiagnosticLog.log("  isSubprocessRunning=\(self.appState.isSubprocessRunning)")
+                DiagnosticLog.log("  status=\(self.appState.status)")
+                DiagnosticLog.log("  hotkeysActive=\(self.appState.hotkeysActive)")
+                self.showStartupFailureAlert()
             }
         }
-        // If !hotkeyOK, the alert handler switches to .accessory after dismissal
+
+        DiagnosticLog.log("applicationDidFinishLaunching complete")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        accessibilityRetryTimer?.invalidate()
+        bridgeReadyWatchdog?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
         hotkeyManager?.stop()
         subprocessManager?.stop()
@@ -108,6 +136,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modelItem.isEnabled = false
         menu.addItem(modelItem)
 
+        if appState.hotkeysActive {
+            let hotkeyItem = NSMenuItem(title: "Hotkeys: Active", action: nil, keyEquivalent: "")
+            hotkeyItem.isEnabled = false
+            menu.addItem(hotkeyItem)
+        } else {
+            let hotkeyItem = NSMenuItem(title: "Hotkeys: Inactive (needs Accessibility)", action: nil, keyEquivalent: "")
+            hotkeyItem.isEnabled = false
+            menu.addItem(hotkeyItem)
+
+            let grantItem = NSMenuItem(title: "Grant Accessibility Permission...", action: #selector(grantAccessibility), keyEquivalent: "")
+            grantItem.target = self
+            menu.addItem(grantItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         let startItem = NSMenuItem(title: "Start Recording", action: #selector(startRecording), keyEquivalent: "")
@@ -133,6 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let logItem = NSMenuItem(title: "Show Diagnostic Log", action: #selector(showDiagnosticLog), keyEquivalent: "")
+        logItem.target = self
+        menu.addItem(logItem)
+
         let quitItem = NSMenuItem(title: "Quit Whisperer", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -148,6 +194,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] status in
                 self?.updateIcon(for: status)
                 self?.rebuildMenu()
+
+                // Cancel the watchdog when bridge reports idle (BRIDGE_READY received)
+                if status == .idle, self?.bridgeReadyWatchdog != nil {
+                    DiagnosticLog.log("Bridge ready — cancelling watchdog")
+                    self?.bridgeReadyWatchdog?.invalidate()
+                    self?.bridgeReadyWatchdog = nil
+                }
             }
             .store(in: &cancellables)
     }
@@ -195,10 +248,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleHotkeyConfigChange() {
-        // Stop old hotkey manager and create new one with updated config
-        hotkeyManager?.stop()
-        hotkeyManager = nil
-        setupHotkeyManager()
+        let ok = setupHotkeyManager()
+        if !ok {
+            promptForAccessibilityAndRetry()
+        }
+    }
+
+    @objc private func grantAccessibility() {
+        let key = "AXTrustedCheckOptionPrompt" as CFString
+        let options = [key: kCFBooleanTrue!] as CFDictionary
+        AXIsProcessTrustedWithOptions(options)
+
+        // Start retry polling if not already running
+        if accessibilityRetryTimer == nil {
+            promptForAccessibilityAndRetry()
+        }
     }
 
     // MARK: - Subprocess
@@ -213,6 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Returns true if hotkeys started successfully, false if Accessibility denied.
     @discardableResult
     private func setupHotkeyManager() -> Bool {
+        hotkeyManager?.stop()
+        hotkeyManager = nil
+
         let config = HotkeyConfig.load()
         let manager = HotkeyManager(appState: appState, config: config) { [weak self] command in
             self?.subprocessManager.sendCommand(command)
@@ -221,38 +288,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ok = manager.start()
         hotkeyManager = manager
 
-        if !ok {
-            // Show alert on next run loop tick so the window is fully set up.
-            // Keep app visible in Dock until the alert is dismissed.
-            DispatchQueue.main.async { [weak self] in
-                self?.showAccessibilityAlert()
-            }
-        }
+        appState.hotkeysActive = ok
+        rebuildMenu()
 
         return ok
     }
 
-    private func showAccessibilityAlert() {
+    /// Show the macOS native Accessibility prompt and poll until permission is granted.
+    private func promptForAccessibilityAndRetry() {
+        DiagnosticLog.log("Accessibility denied — showing system prompt and starting retry timer")
+
+        // Trigger macOS's native "allow Accessibility" dialog
+        let key = "AXTrustedCheckOptionPrompt" as CFString
+        let options = [key: kCFBooleanTrue!] as CFDictionary
+        AXIsProcessTrustedWithOptions(options)
+
+        // Poll every 2 seconds; auto-enable hotkeys once permission is granted.
+        accessibilityRetryTimer?.invalidate()
+        accessibilityRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            if AXIsProcessTrusted() {
+                DiagnosticLog.log("Accessibility permission granted — enabling hotkeys")
+                timer.invalidate()
+                self.accessibilityRetryTimer = nil
+                let ok = self.setupHotkeyManager()
+                if ok {
+                    DispatchQueue.main.async {
+                        NSApp.setActivationPolicy(.accessory)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Startup Failure Alert
+
+    private func showStartupFailureAlert() {
         // Bring app to front so alert is visible
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Required"
-        alert.informativeText = "Whisperer needs Accessibility access to detect global hotkeys.\n\nGrant access in System Settings > Privacy & Security > Accessibility, then relaunch."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
+        alert.messageText = "Whisperer Failed to Start"
 
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
-            }
+        var details: [String] = []
+        if !appState.hotkeysActive {
+            details.append("Hotkeys: NOT WORKING (Accessibility permission needed)")
+        }
+        if !appState.isSubprocessRunning {
+            details.append("Python bridge: NOT RUNNING")
+        }
+        if case .error(let msg) = appState.status {
+            details.append("Error: \(msg)")
         }
 
-        // Now safe to hide from Dock
-        NSApp.setActivationPolicy(.accessory)
+        let logPath = DiagnosticLog.logPath
+        alert.informativeText = details.joined(separator: "\n") +
+            "\n\nDiagnostic log written to:\n\(logPath)"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Log File")
+        alert.addButton(withTitle: "OK")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: logPath))
+        }
+
+        // Now safe to hide from Dock if hotkeys are working
+        if appState.hotkeysActive {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     // MARK: - Actions
@@ -304,7 +411,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc private func showDiagnosticLog() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: DiagnosticLog.logPath))
+    }
+
     @objc private func quitApp() {
+        accessibilityRetryTimer?.invalidate()
+        bridgeReadyWatchdog?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
         hotkeyManager?.stop()
         subprocessManager?.stop()

@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -37,6 +38,16 @@ final class HotkeyManager {
     func start() -> Bool {
         let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
 
+        let trusted = AXIsProcessTrusted()
+        DiagnosticLog.log("HotkeyManager.start: AXIsProcessTrusted=\(trusted)")
+
+        // On macOS 15+, CGEvent.tapCreate can succeed even without Accessibility,
+        // but events are silently never delivered. Check AXIsProcessTrusted() directly.
+        guard trusted else {
+            DiagnosticLog.log("HotkeyManager.start: FAILED — Accessibility not granted (AXIsProcessTrusted=false)")
+            return false
+        }
+
         // Use a closure wrapper via Unmanaged pointer
         let unmanaged = Unmanaged.passRetained(self)
         let selfPtr = unmanaged.toOpaque()
@@ -49,7 +60,7 @@ final class HotkeyManager {
             callback: hotkeyCallback,
             userInfo: selfPtr
         ) else {
-            NSLog("[Whisperer-HK] FAILED to create event tap — Accessibility permission likely denied")
+            DiagnosticLog.log("HotkeyManager.start: FAILED — CGEvent.tapCreate returned nil (Accessibility denied)")
             unmanaged.release()
             return false
         }
@@ -63,7 +74,7 @@ final class HotkeyManager {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
-        NSLog("[Whisperer-HK] Event tap installed successfully")
+        DiagnosticLog.log("HotkeyManager.start: Event tap installed successfully")
         return true
     }
 

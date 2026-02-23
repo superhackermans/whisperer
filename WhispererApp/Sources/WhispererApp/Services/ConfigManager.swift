@@ -17,15 +17,17 @@ final class ConfigManager: ObservableObject {
             if !stored.isEmpty {
                 // Verify stored path still exists
                 if FileManager.default.isExecutableFile(atPath: stored) {
+                    DiagnosticLog.log("pythonPath from UserDefaults: \(stored)")
                     return stored
                 }
-                NSLog("[Whisperer] Stored pythonPath '%@' no longer exists — re-detecting", stored)
+                DiagnosticLog.log("Stored pythonPath '\(stored)' no longer exists — re-detecting")
                 UserDefaults.standard.removeObject(forKey: "pythonPath")
             }
             // Auto-detect and persist for future launches (including Finder)
+            DiagnosticLog.log("Auto-detecting Python interpreter...")
             let found = Self.findPython()
             UserDefaults.standard.set(found, forKey: "pythonPath")
-            NSLog("[Whisperer] Persisted pythonPath to UserDefaults: %@", found)
+            DiagnosticLog.log("Persisted pythonPath to UserDefaults: \(found)")
             return found
         }
         set {
@@ -206,8 +208,7 @@ final class ConfigManager: ObservableObject {
             }
         }
 
-        NSLog("[Whisperer] Python candidates (%d): %@",
-              candidates.count, candidates.joined(separator: ", "))
+        DiagnosticLog.log("Python candidates (\(candidates.count)): \(candidates.joined(separator: ", "))")
 
         // Test each candidate: can it import the required packages?
         for python in candidates {
@@ -220,13 +221,13 @@ final class ConfigManager: ObservableObject {
                 try proc.run()
                 proc.waitUntilExit()
                 if proc.terminationStatus == 0 {
-                    NSLog("[Whisperer] Found working Python with all deps: %@", python)
+                    DiagnosticLog.log("Found working Python with all deps: \(python)")
                     return python
                 } else {
-                    NSLog("[Whisperer] %@ missing deps (exit %d)", python, proc.terminationStatus)
+                    DiagnosticLog.log("\(python) missing deps (exit \(proc.terminationStatus))")
                 }
             } catch {
-                NSLog("[Whisperer] %@ failed to launch: %@", python, error.localizedDescription)
+                DiagnosticLog.log("\(python) failed to launch: \(error.localizedDescription)")
             }
         }
 
@@ -241,13 +242,13 @@ final class ConfigManager: ObservableObject {
                 try proc.run()
                 proc.waitUntilExit()
                 if proc.terminationStatus == 0 {
-                    NSLog("[Whisperer] Found Python with yaml (partial deps): %@", python)
+                    DiagnosticLog.log("Found Python with yaml (partial deps): \(python)")
                     return python
                 }
             } catch {}
         }
 
-        NSLog("[Whisperer] WARNING: No Python with required packages found")
+        DiagnosticLog.log("WARNING: No Python with required packages found!")
         return candidates.first ?? "/usr/bin/python3"
     }
 }

@@ -109,10 +109,23 @@ else
     echo "  Signed (ad-hoc, no entitlements file)"
 fi
 
+# Remove quarantine extended attributes so Finder-launched app isn't blocked by Gatekeeper
+xattr -cr "$APP" 2>/dev/null || true
+echo "  Quarantine attributes cleared"
+
 echo "=== .app bundle created at $APP ==="
+echo ""
+echo "Diagnostic log: $(pwd)/Whisperer.log"
+echo "  (check this file if the app doesn't work when double-clicked from Finder)"
+echo ""
 echo "=== Launching (stdout/stderr shown here) ==="
 echo ""
 
+# Kill any running instance first — otherwise `open` reactivates the old
+# process whose bundle we just deleted and rebuilt.
+pkill -f "WhispererApp.app/Contents/MacOS/WhispererApp" 2>/dev/null || true
+sleep 0.3
+
 # Run the executable directly from the bundle so we see output in terminal.
 # macOS recognizes the .app bundle structure and registers with WindowServer.
-exec "$APP/Contents/MacOS/WhispererApp"
+open "$APP"

@@ -48,14 +48,11 @@ final class PythonSubprocessManager {
 
     func sendCommand(_ command: String) {
         guard let pipe = stdinPipe, let proc = process, proc.isRunning else {
-            NSLog("[Whisperer-CMD] Cannot send '%@' — subprocess not running (process=%@, isRunning=%d)",
-                  command,
-                  process == nil ? "nil" : "exists",
-                  process?.isRunning == true ? 1 : 0)
+            DiagnosticLog.log("Cannot send '\(command)' — subprocess not running (process=\(process == nil ? "nil" : "exists"), isRunning=\(process?.isRunning == true))")
             return
         }
         guard let data = (command + "\n").data(using: .utf8) else { return }
-        NSLog("[Whisperer-CMD] >>> Sending to Python stdin: '%@'", command)
+        DiagnosticLog.log(">>> Sending to Python stdin: '\(command)'")
         // SIGPIPE is ignored globally (set in AppDelegate), so writing to a broken
         // pipe won't crash — it will simply fail silently, which is acceptable
         // since the terminationHandler will handle recovery.
@@ -69,6 +66,8 @@ final class PythonSubprocessManager {
         isRunning = true
         lock.unlock()
 
+        DiagnosticLog.log("launchProcess: starting Python subprocess")
+
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -76,21 +75,28 @@ final class PythonSubprocessManager {
 
         // Bridge script path
         let bridgePath = findBridgeScript()
+        DiagnosticLog.log("Bridge script path: \(bridgePath)")
 
         // Use the detected/configured Python interpreter.
         // ConfigManager.findPython() probes each candidate to ensure it has pyyaml.
         let pythonPath = configManager.pythonPath
+        DiagnosticLog.log("ConfigManager.pythonPath = '\(pythonPath)'")
         if pythonPath.isEmpty {
             // Fallback: use /usr/bin/env to resolve from PATH
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = ["python3", bridgePath]
+            DiagnosticLog.log("Using /usr/bin/env python3 (no configured Python)")
         } else {
+            let pythonExists = FileManager.default.fileExists(atPath: pythonPath)
+            DiagnosticLog.log("Using configured Python: \(pythonPath) (exists: \(pythonExists))")
             process.executableURL = URL(fileURLWithPath: pythonPath)
             process.arguments = [bridgePath]
         }
 
         // Working directory is the bridge script's directory so imports work
-        process.currentDirectoryURL = URL(fileURLWithPath: bridgePath).deletingLastPathComponent()
+        let workingDir = URL(fileURLWithPath: bridgePath).deletingLastPathComponent()
+        process.currentDirectoryURL = workingDir
+        DiagnosticLog.log("Working directory: \(workingDir.path)")
 
         // Environment — Finder launches have minimal PATH, so ensure common paths are included
         var env = ProcessInfo.processInfo.environment
@@ -108,6 +114,7 @@ final class PythonSubprocessManager {
         let existing = currentPath.split(separator: ":").map(String.init)
         let toAdd = extraPaths.filter { !existing.contains($0) }
         env["PATH"] = (existing + toAdd).joined(separator: ":")
+        DiagnosticLog.log("PATH = \(env["PATH"] ?? "(nil)")")
 
         // Always enable debug logging in Python bridge for diagnostics.
         // Python debug lines are prefixed with DEBUG and parsed by StdoutParser.
@@ -134,7 +141,7 @@ final class PythonSubprocessManager {
             }
         }
 
-        // Handle stderr (just log it)
+        // Handle stderr — write to diagnostic log so Finder launch errors are visible
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
@@ -142,14 +149,17 @@ final class PythonSubprocessManager {
                 return
             }
             if let output = String(data: data, encoding: .utf8) {
-                NSLog("[Whisperer stderr] %@", output.trimmingCharacters(in: .whitespacesAndNewlines))
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    DiagnosticLog.log("Python stderr: \(trimmed)")
+                }
             }
         }
 
         // Handle termination
         process.terminationHandler = { [weak self] proc in
             guard let self = self else { return }
-            NSLog("[Whisperer] Subprocess terminated with status %d", proc.terminationStatus)
+            DiagnosticLog.log("Subprocess terminated — exit status \(proc.terminationStatus), reason \(proc.terminationReason.rawValue)")
 
             DispatchQueue.main.async {
                 self.appState.isSubprocessRunning = false
@@ -168,27 +178,36 @@ final class PythonSubprocessManager {
         self.stdinPipe = stdinPipe
 
         do {
-            try process.run()
+            let execPath = process.executableURL?.path ?? "?"
             let args = process.arguments?.joined(separator: " ") ?? ""
-            NSLog("[Whisperer] Subprocess launched: %@ %@", process.executableURL?.path ?? "?", args)
+            DiagnosticLog.log("Launching: \(execPath) \(args)")
+            try process.run()
+            DiagnosticLog.log("Subprocess launched successfully — PID \(process.processIdentifier)")
             DispatchQueue.main.async {
                 self.appState.isSubprocessRunning = true
             }
         } catch {
-            NSLog("[Whisperer] Failed to launch subprocess: %@", error.localizedDescription)
+            DiagnosticLog.log("FAILED to launch subprocess: \(error.localizedDescription)")
             DispatchQueue.main.async {
-                self.appState.status = .error("Failed to start Python bridge")
+                self.appState.status = .error("Failed to start Python bridge: \(error.localizedDescription)")
                 self.appState.isSubprocessRunning = false
             }
         }
     }
 
     private func findBridgeScript() -> String {
+        DiagnosticLog.log("findBridgeScript: searching for swift_bridge.py")
+        DiagnosticLog.log("  Bundle.main.bundlePath = \(Bundle.main.bundlePath)")
+        DiagnosticLog.log("  Bundle.main.resourceURL = \(Bundle.main.resourceURL?.path ?? "nil")")
+        DiagnosticLog.log("  Bundle.main.executableURL = \(Bundle.main.executableURL?.path ?? "nil")")
+        DiagnosticLog.log("  cwd = \(FileManager.default.currentDirectoryPath)")
+
         // 1. Check inside the .app bundle's Resources (Finder launch)
         if let resourceURL = Bundle.main.resourceURL {
             let bundled = resourceURL.appendingPathComponent("swift_bridge.py").path
-            if FileManager.default.fileExists(atPath: bundled) {
-                NSLog("[Whisperer] Found swift_bridge.py in bundle Resources: %@", bundled)
+            let exists = FileManager.default.fileExists(atPath: bundled)
+            DiagnosticLog.log("  Check bundle Resources: \(bundled) — \(exists ? "FOUND" : "not found")")
+            if exists {
                 return bundled
             }
         }
@@ -201,11 +220,13 @@ final class PythonSubprocessManager {
             startURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         }
 
+        DiagnosticLog.log("  Walking up from: \(startURL.path)")
         var dir = startURL
-        for _ in 0..<10 {
+        for i in 0..<10 {
             let candidate = dir.appendingPathComponent("swift_bridge.py").path
-            if FileManager.default.fileExists(atPath: candidate) {
-                NSLog("[Whisperer] Found swift_bridge.py walking up from executable: %@", candidate)
+            let exists = FileManager.default.fileExists(atPath: candidate)
+            DiagnosticLog.log("  Walk[\(i)]: \(candidate) — \(exists ? "FOUND" : "not found")")
+            if exists {
                 return candidate
             }
             let parent = dir.deletingLastPathComponent()
@@ -215,14 +236,14 @@ final class PythonSubprocessManager {
 
         // 3. Check current working directory
         let cwdCandidate = FileManager.default.currentDirectoryPath + "/swift_bridge.py"
-        if FileManager.default.fileExists(atPath: cwdCandidate) {
-            NSLog("[Whisperer] Found swift_bridge.py in cwd: %@", cwdCandidate)
+        let cwdExists = FileManager.default.fileExists(atPath: cwdCandidate)
+        DiagnosticLog.log("  Check cwd: \(cwdCandidate) — \(cwdExists ? "FOUND" : "not found")")
+        if cwdExists {
             return cwdCandidate
         }
 
         // Last resort — caller will get a "file not found" from Python
-        NSLog("[Whisperer] swift_bridge.py NOT FOUND — searched bundle Resources, walked up from %@, checked cwd %@",
-              startURL.path, FileManager.default.currentDirectoryPath)
+        DiagnosticLog.log("  swift_bridge.py NOT FOUND anywhere!")
         return "swift_bridge.py"
     }
 
@@ -350,7 +371,7 @@ final class PythonSubprocessManager {
         lock.unlock()
 
         if count >= maxCrashes {
-            NSLog("[Whisperer] Too many crashes (%d in %ds) — not restarting", count, Int(crashWindowSeconds))
+            DiagnosticLog.log("Too many crashes (\(count) in \(Int(crashWindowSeconds))s) — NOT restarting")
             DispatchQueue.main.async {
                 self.appState.status = .error("Python bridge crashed repeatedly")
             }
@@ -360,7 +381,7 @@ final class PythonSubprocessManager {
             return
         }
 
-        NSLog("[Whisperer] Restarting subprocess (crash %d/%d)", count, maxCrashes)
+        DiagnosticLog.log("Restarting subprocess (crash \(count)/\(maxCrashes)) in 1s...")
         DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.launchProcess()
         }

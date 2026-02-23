@@ -3,6 +3,7 @@ services:
     build: .
     volumes:
       - ~/.claude:/home/claude/.claude
+      - ~/.claude.json:/home/claude/.claude.json
       - .:/app
     stdin_open: true
     tty: true

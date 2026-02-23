@@ -13,6 +13,7 @@ final class AppState: ObservableObject {
     @Published var currentModel: String?
     @Published var lastTranscription: String?
     @Published var isSubprocessRunning: Bool = false
+    @Published var hotkeysActive: Bool = false
     @Published var debugMessages: [String] = []
 
     /// Max debug messages to retain in memory
