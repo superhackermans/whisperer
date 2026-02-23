@@ -1,6 +1,6 @@
 # Whisperer
 
-Local voice-to-text for macOS using [whisper.cpp](https://github.com/ggerganov/whisper.cpp). Hold a hotkey, speak, release — transcribed text is pasted into the active text field. All processing happens on-device.
+Local voice-to-text for macOS using [whisper.cpp](https://github.com/ggerganov/whisper.cpp). Hold a hotkey, speak, release and transcribed text is pasted into the active text field. All processing happens on-device.
 
 ## Setup
 
