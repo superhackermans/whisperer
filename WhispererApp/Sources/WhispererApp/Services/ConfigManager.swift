@@ -73,6 +73,7 @@ final class ConfigManager: ObservableObject {
             if let v = dict["sound_volume"] as? Int { c.soundVolume = v }
             if let v = dict["cleanup_recordings"] as? Bool { c.cleanupRecordings = v }
             if let v = dict["debug"] as? Bool { c.debug = v }
+            if let v = dict["custom_words"] as? [String: String] { c.customWords = v }
 
             if let modelsDict = dict["models"] as? [String: Any] {
                 var models: [String: WhispererConfig.ModelRange?] = [:]
@@ -130,6 +131,9 @@ final class ConfigManager: ObservableObject {
         dict["sound_volume"] = config.soundVolume
         dict["cleanup_recordings"] = config.cleanupRecordings
         dict["debug"] = config.debug
+        if !config.customWords.isEmpty {
+            dict["custom_words"] = config.customWords
+        }
 
         do {
             try FileManager.default.createDirectory(
@@ -214,7 +218,7 @@ final class ConfigManager: ObservableObject {
         for python in candidates {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: python)
-            proc.arguments = ["-c", "import yaml, numpy, pyaudio, pyperclip"]
+            proc.arguments = ["-c", "import yaml, numpy, pyaudio, pyperclip, pynput"]
             proc.standardOutput = FileHandle.nullDevice
             proc.standardError = FileHandle.nullDevice
             do {

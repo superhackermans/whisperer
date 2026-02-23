@@ -70,6 +70,7 @@ def main():
         enable_stop_sound=config.get("enable_stop_sound", True),
         enable_error_sound=config.get("enable_error_sound", True),
         sound_volume=config.get("sound_volume", 50),
+        custom_words=config.get("custom_words", {}),
     )
     core.log(f"Whisperer starting... (PID: {os.getpid()}, Python: {sys.version})")
 

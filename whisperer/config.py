@@ -27,10 +27,12 @@ DEFAULT_CONFIG = {
     "sound_volume": 50,
     "cleanup_recordings": True,
     "debug": False,
+    "custom_words": {},
 }
 
 # Searched in order when whispercpp_folder is empty
 _WHISPER_SEARCH_PATHS = [
+    "~/dev/whisper.cpp",
     "~/Documents/GitHub/whisper.cpp",
     "~/whisper.cpp",
     "/opt/whisper.cpp",
@@ -114,6 +116,22 @@ def load_config(debug_log=None):
         else:
             models[name] = val
     config["models"] = models
+
+    # Validate custom_words: must be a dict with string keys and values
+    raw_words = config.get("custom_words", {})
+    if isinstance(raw_words, dict):
+        clean_words = {}
+        for k, v in raw_words.items():
+            sk, sv = str(k), str(v)
+            if sk and sv:
+                clean_words[sk] = sv
+            elif debug_log:
+                debug_log(f"[config] Skipping invalid custom_words entry: {k!r} -> {v!r}")
+        config["custom_words"] = clean_words
+    else:
+        if debug_log:
+            debug_log(f"[config] custom_words is not a dict ({type(raw_words).__name__}) — using empty")
+        config["custom_words"] = {}
 
     # Auto-detect whisper.cpp if not set
     if not config.get("whispercpp_folder"):

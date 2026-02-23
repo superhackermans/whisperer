@@ -16,6 +16,41 @@ Commands (one per line):
 import os
 import sys
 import threading
+import traceback
+from datetime import datetime
+
+# ---------------------------------------------------------------------------
+# Crash logging — write to a known file so errors are ALWAYS visible,
+# even when stderr is lost due to pipe-drain race conditions in Swift.
+# ---------------------------------------------------------------------------
+_CRASH_LOG = os.path.expanduser("~/.whisperer/bridge_crash.log")
+
+
+def _write_crash(msg):
+    """Write crash info to stderr AND a dedicated crash file."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    full = f"[{timestamp}] {msg}"
+    try:
+        sys.stderr.write(full + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        os.makedirs(os.path.dirname(_CRASH_LOG), exist_ok=True)
+        with open(_CRASH_LOG, "a") as f:
+            f.write(full + "\n")
+    except Exception:
+        pass
+
+
+def _thread_excepthook(args):
+    """Catch unhandled exceptions in daemon threads."""
+    name = args.thread.name if args.thread else "unknown"
+    tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+    _write_crash(f"Thread '{name}' crashed:\n{tb}")
+
+
+threading.excepthook = _thread_excepthook
 
 from config import load_config
 from core import WhispererCore
@@ -49,6 +84,7 @@ def main():
         enable_stop_sound=config.get("enable_stop_sound", True),
         enable_error_sound=config.get("enable_error_sound", True),
         sound_volume=config.get("sound_volume", 50),
+        custom_words=config.get("custom_words", {}),
         on_transcription_done=_on_transcription_done,
     )
 
@@ -112,14 +148,21 @@ def main():
             core.log("Bridge stdin closed.")
         except Exception as e:
             core.log(f"Bridge command error: {e}")
+            _write_crash(f"read_commands error: {traceback.format_exc()}")
         finally:
             os._exit(0)
 
     # Read commands on a background thread so we don't block
-    cmd_thread = threading.Thread(target=read_commands, daemon=True)
+    cmd_thread = threading.Thread(target=read_commands, name="stdin-reader", daemon=True)
     cmd_thread.start()
     cmd_thread.join()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        _write_crash(f"FATAL in main():\n{traceback.format_exc()}")
+        sys.exit(1)

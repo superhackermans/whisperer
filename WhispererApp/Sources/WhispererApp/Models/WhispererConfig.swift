@@ -13,6 +13,7 @@ struct WhispererConfig: Codable {
     var soundVolume: Int
     var cleanupRecordings: Bool
     var debug: Bool
+    var customWords: [String: String]
 
     /// A model's duration range [min, max] or null for manual-only
     struct ModelRange: Codable {
@@ -48,6 +49,7 @@ struct WhispererConfig: Codable {
         case soundVolume = "sound_volume"
         case cleanupRecordings = "cleanup_recordings"
         case debug
+        case customWords = "custom_words"
     }
 
     static let `default` = WhispererConfig(
@@ -65,6 +67,7 @@ struct WhispererConfig: Codable {
         enableErrorSound: true,
         soundVolume: 50,
         cleanupRecordings: true,
-        debug: false
+        debug: false,
+        customWords: [:]
     )
 }

@@ -150,6 +150,7 @@ class WhispererCore:
         enable_stop_sound=True,
         enable_error_sound=True,
         sound_volume=50,
+        custom_words=None,
         on_error=None,
         on_transcribing=None,
         on_transcription_done=None,
@@ -165,6 +166,7 @@ class WhispererCore:
         self.enable_stop_sound = enable_stop_sound
         self.enable_error_sound = enable_error_sound
         self.sound_volume = sound_volume
+        self.custom_words = custom_words or {}
         self.models = models or {
             "tiny.en": (0, 1.5),
             "base.en": (1.5, 3),
@@ -202,6 +204,7 @@ class WhispererCore:
             self.log_debug(f"[init] models={self.models}")
             self.log_debug(f"[init] enable_beeps={self.enable_beeps}")
             self.log_debug(f"[init] cleanup_recordings={self.cleanup_recordings}")
+            self.log_debug(f"[init] custom_words={self.custom_words}")
             self.log_debug(f"[init] debug={self.debug}")
             self.log_debug(f"[init] callbacks: on_error={on_error is not None}, "
                            f"on_transcribing={on_transcribing is not None}, "
@@ -653,6 +656,22 @@ class WhispererCore:
                     transcription, keep_punctuation,
                     debug_log=self.log_debug if self.debug else None,
                 )
+                # Apply custom word replacements
+                if self.custom_words:
+                    for wrong, correct in self.custom_words.items():
+                        try:
+                            new_text = re.sub(
+                                r'\b' + re.escape(str(wrong)) + r'\b',
+                                str(correct), transcription, flags=re.IGNORECASE,
+                            )
+                            if new_text != transcription:
+                                self.log_debug(f"  [clean] custom_words: '{wrong}' -> '{correct}': "
+                                               f"'{transcription}' -> '{new_text}'")
+                                transcription = new_text
+                        except Exception as e:
+                            self.log(f"WARNING: custom_words replacement failed for "
+                                     f"'{wrong}' -> '{correct}': {e}")
+
                 self.log(f"Cleaned: '{transcription}'")
                 if self.debug:
                     self.log_debug(f"[clean] Final length: {len(transcription)} chars")
