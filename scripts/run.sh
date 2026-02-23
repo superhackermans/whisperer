@@ -1,7 +1,9 @@
 #!/bin/bash
 
+cd "$(dirname "$0")/.."
+
 while true; do
-    python3.10 whisperer.py $@
+    python3.10 whisperer/cli.py $@
     exit_code=$?
     if [ $exit_code -eq 0 ]; then
         break

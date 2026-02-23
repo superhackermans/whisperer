@@ -46,7 +46,11 @@ RATE = 16000
 # ---------------------------------------------------------------------------
 # Audio feedback sounds (relative to this file's directory)
 # ---------------------------------------------------------------------------
-_SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "Sounds")
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_SOUNDS_DIR = os.path.join(_THIS_DIR, "assets", "Sounds")
+if not os.path.isdir(_SOUNDS_DIR):
+    _SOUNDS_DIR = os.path.join(_THIS_DIR, os.pardir, "assets", "Sounds")
+_SOUNDS_DIR = os.path.normpath(_SOUNDS_DIR)
 _SOUND_START = os.path.join(_SOUNDS_DIR, "Pop Short.aiff")
 _SOUND_STOP = os.path.join(_SOUNDS_DIR, "Pop.aiff")
 _SOUND_ERROR = os.path.join(_SOUNDS_DIR, "Basso.aiff")

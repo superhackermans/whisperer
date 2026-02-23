@@ -35,11 +35,11 @@ cp "$EXEC" "$APP/Contents/MacOS/WhispererApp"
 # Bundle Python bridge scripts and dependencies
 echo "=== Bundling Python files ==="
 for pyfile in swift_bridge.py core.py config.py phrases.py; do
-    if [ -f "$PROJECT_ROOT/$pyfile" ]; then
-        cp "$PROJECT_ROOT/$pyfile" "$APP/Contents/Resources/$pyfile"
+    if [ -f "$PROJECT_ROOT/whisperer/$pyfile" ]; then
+        cp "$PROJECT_ROOT/whisperer/$pyfile" "$APP/Contents/Resources/$pyfile"
         echo "  Bundled $pyfile"
     else
-        echo "  WARNING: $pyfile not found at $PROJECT_ROOT/$pyfile"
+        echo "  WARNING: $pyfile not found at $PROJECT_ROOT/whisperer/$pyfile"
     fi
 done
 

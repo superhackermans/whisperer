@@ -5,13 +5,20 @@ macOS voice-to-text app using whisper.cpp for local speech transcription. Hold a
 ## Architecture
 
 ```
-whisperer.py          CLI entry point (hotkey listener)
-whisperergui.py       macOS menu bar app (rumps)
-core.py               Engine: recording, transcription, text cleaning, clipboard paste
-config.py             YAML config loader (~/.whisperer/config.yaml) + whisper.cpp auto-detect
-phrases.py            List of junk phrases to strip from transcriptions
-listener.py           Debug tool: prints key names to identify hotkey codes
-setup.py              py2app config for bundling the GUI as a .app
+whisperer/                Python package
+  cli.py                  CLI entry point (hotkey listener)
+  core.py                 Engine: recording, transcription, text cleaning, clipboard paste
+  config.py               YAML config loader (~/.whisperer/config.yaml) + whisper.cpp auto-detect
+  phrases.py              List of junk phrases to strip from transcriptions
+  swift_bridge.py         Bridge between Swift GUI and Python engine
+  listener.py             Debug tool: prints key names to identify hotkey codes
+WhispererApp/             Native Swift menu bar app (configurable hotkeys, menu bar icon)
+scripts/                  Shell scripts
+  install.sh              System deps + Python packages installer
+  install_whispercpp.sh   whisper.cpp build + model download script
+  run.sh                  Auto-restart wrapper
+assets/                   Icons and sound files
+  Sounds/                 Audio feedback sound files
 ```
 
 ### Threading model
@@ -32,7 +39,7 @@ Hotkey press → record audio → save WAV (padded to 5s) → queue
 
 ## Dependencies
 
-**Python packages**: pynput, pyaudio, pyperclip, numpy, pyyaml, rumps (GUI only)
+**Python packages**: pynput, pyaudio, pyperclip, numpy, pyyaml
 
 **External**: whisper.cpp compiled binary + GGML model files. Default location: `~/Documents/GitHub/whisper.cpp/`
 
@@ -42,19 +49,19 @@ Hotkey press → record audio → save WAV (padded to 5s) → queue
 
 ```bash
 # Install system deps + Python packages
-./install.sh
+./scripts/install.sh
 
 # Build and download whisper.cpp models
-./install_whispercpp.sh
+./scripts/install_whispercpp.sh
 
 # Run CLI
-python3 whisperer.py
-
-# Run GUI
-python3 whisperergui.py
+python3 whisperer/cli.py
 
 # Auto-restart wrapper
-./run.sh
+./scripts/run.sh
+
+# Native Swift menu bar app
+cd WhispererApp && ./build_and_run.sh
 ```
 
 ## Hotkeys (CLI mode)
@@ -82,7 +89,7 @@ python3 whisperergui.py
 - `--logprob-thold -0.5` — rejects low-confidence hallucinated output (default -1.0)
 - Prompt is descriptive ("Voice dictation, clear speech, single speaker."), not instructional
 
-## Text cleaning pipeline (core.py `clean_transcription`)
+## Text cleaning pipeline (whisperer/core.py `clean_transcription`)
 
 1. Strip `[bracketed]` and `(parenthesized)` content
 2. Strip `$` artifacts (prompt leakage)

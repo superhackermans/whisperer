@@ -223,7 +223,7 @@ final class PythonSubprocessManager {
         DiagnosticLog.log("  Walking up from: \(startURL.path)")
         var dir = startURL
         for i in 0..<10 {
-            let candidate = dir.appendingPathComponent("swift_bridge.py").path
+            let candidate = dir.appendingPathComponent("whisperer/swift_bridge.py").path
             let exists = FileManager.default.fileExists(atPath: candidate)
             DiagnosticLog.log("  Walk[\(i)]: \(candidate) — \(exists ? "FOUND" : "not found")")
             if exists {
@@ -235,7 +235,7 @@ final class PythonSubprocessManager {
         }
 
         // 3. Check current working directory
-        let cwdCandidate = FileManager.default.currentDirectoryPath + "/swift_bridge.py"
+        let cwdCandidate = FileManager.default.currentDirectoryPath + "/whisperer/swift_bridge.py"
         let cwdExists = FileManager.default.fileExists(atPath: cwdCandidate)
         DiagnosticLog.log("  Check cwd: \(cwdCandidate) — \(cwdExists ? "FOUND" : "not found")")
         if cwdExists {

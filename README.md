@@ -16,10 +16,10 @@ All processing happens on-device. No data leaves your machine.
 
 ```bash
 # 1. Install system dependencies and Python packages
-./install.sh
+./scripts/install.sh
 
 # 2. Clone, compile whisper.cpp, and download models
-./install_whispercpp.sh
+./scripts/install_whispercpp.sh
 ```
 
 ### Manual setup
@@ -38,7 +38,7 @@ Grant your terminal (or the bundled .app) **Accessibility** and **Input Monitori
 ### CLI mode (recommended)
 
 ```bash
-python3 whisperer.py
+python3 whisperer/cli.py
 ```
 
 ### Auto-restart wrapper
@@ -46,26 +46,19 @@ python3 whisperer.py
 Survives whisper.cpp segfaults by restarting automatically:
 
 ```bash
-./run.sh
+./scripts/run.sh
 ```
 
-### Menu bar app
+### Native menu bar app (Swift)
+
+Build and run the native macOS menu bar app:
 
 ```bash
-python3 whisperergui.py
-```
-
-Provides a macOS menu bar icon with model selection, keybinding configuration, and manual start/stop controls.
-
-### Building the .app bundle
-
-```bash
-python3 setup.py py2app
+cd WhispererApp
+./build_and_run.sh
 ```
 
 ## Hotkeys
-
-### CLI mode
 
 | Combo | Action |
 |-------|--------|
@@ -75,10 +68,6 @@ python3 setup.py py2app
 | Release either key | Stop recording |
 
 Say **"cancel that"** during recording to discard the transcription.
-
-### GUI mode
-
-Default keybinding is **Cmd + Option** (configurable via the menu bar). The GUI also supports Shift + Option and Cmd + Shift.
 
 ## How it works
 
@@ -148,9 +137,9 @@ Enable with any of:
 - `debug: true` in config
 
 ```bash
-python3 whisperer.py --debug
+python3 whisperer/cli.py --debug
 # or
-WHISPERER_DEBUG=1 python3 whisperer.py
+WHISPERER_DEBUG=1 python3 whisperer/cli.py
 ```
 
 Debug output is tagged by subsystem (`[record]`, `[transcribe]`, `[clean]`, `[hotkey]`, etc.) with millisecond timestamps.
@@ -158,17 +147,20 @@ Debug output is tagged by subsystem (`[record]`, `[transcribe]`, `[clean]`, `[ho
 ## Project structure
 
 ```
-whisperer.py          CLI entry point (hotkey listener)
-whisperergui.py       macOS menu bar app (rumps)
-core.py               Engine: recording, transcription, text cleaning, clipboard paste
-config.py             YAML config loader + whisper.cpp auto-detection
-phrases.py            Known hallucination phrases to strip
-listener.py           Debug tool: prints key names for hotkey identification
-setup.py              py2app config for bundling as .app
-install.sh            System deps + Python packages installer
-install_whispercpp.sh whisper.cpp build + model download script
-run.sh                Auto-restart wrapper
-Sounds/               Audio feedback sound files
+whisperer/                Python package
+  cli.py                  CLI entry point (hotkey listener)
+  core.py                 Engine: recording, transcription, text cleaning, clipboard paste
+  config.py               YAML config loader + whisper.cpp auto-detection
+  phrases.py              Known hallucination phrases to strip
+  swift_bridge.py         Bridge between Swift GUI and Python engine
+  listener.py             Debug tool: prints key names for hotkey identification
+WhispererApp/             Native Swift menu bar app
+assets/                   Icons and sound files
+  Sounds/                 Audio feedback sound files
+scripts/                  Shell scripts
+  install.sh              System deps + Python packages installer
+  install_whispercpp.sh   whisper.cpp build + model download script
+  run.sh                  Auto-restart wrapper
 ```
 
 ## License
