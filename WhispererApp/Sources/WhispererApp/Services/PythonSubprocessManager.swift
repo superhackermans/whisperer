@@ -125,12 +125,18 @@ final class PythonSubprocessManager {
         process.standardError = stderrPipe
         process.standardInput = stdinPipe
 
-        // Handle stdout
+        // Use a DispatchGroup to wait for both pipes to drain before handling
+        // termination. Without this, the terminationHandler fires before
+        // readabilityHandlers process the final data, losing crash tracebacks.
+        let pipeGroup = DispatchGroup()
+
+        pipeGroup.enter()
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 // EOF
                 handle.readabilityHandler = nil
+                pipeGroup.leave()
                 return
             }
             if let output = String(data: data, encoding: .utf8) {
@@ -142,10 +148,12 @@ final class PythonSubprocessManager {
         }
 
         // Handle stderr — write to diagnostic log so Finder launch errors are visible
+        pipeGroup.enter()
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
+                pipeGroup.leave()
                 return
             }
             if let output = String(data: data, encoding: .utf8) {
@@ -156,10 +164,27 @@ final class PythonSubprocessManager {
             }
         }
 
-        // Handle termination
+        // Handle termination — wait for pipes to drain first so we capture all output
         process.terminationHandler = { [weak self] proc in
             guard let self = self else { return }
+
+            // Wait up to 2 seconds for stdout/stderr to flush
+            let waitResult = pipeGroup.wait(timeout: .now() + 2.0)
+            if waitResult == .timedOut {
+                DiagnosticLog.log("WARNING: Pipe drain timed out after 2s")
+            }
+
             DiagnosticLog.log("Subprocess terminated — exit status \(proc.terminationStatus), reason \(proc.terminationReason.rawValue)")
+
+            // Check for Python crash log
+            let crashLogPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".whisperer/bridge_crash.log").path
+            if let crashData = FileManager.default.contents(atPath: crashLogPath),
+               let crashText = String(data: crashData, encoding: .utf8),
+               !crashText.isEmpty {
+                let lastLines = crashText.components(separatedBy: .newlines).suffix(20).joined(separator: "\n")
+                DiagnosticLog.log("Python crash log (last 20 lines):\n\(lastLines)")
+            }
 
             DispatchQueue.main.async {
                 self.appState.isSubprocessRunning = false
@@ -253,6 +278,13 @@ final class PythonSubprocessManager {
         let event = parser.parse(line: line)
         NSLog("[Whisperer-PY] <<< %@  →  event=%@", line.prefix(200).description, "\(event)")
 
+        // Mirror critical Python output to DiagnosticLog so it's visible
+        // without Console.app (errors, setup failures, warnings)
+        let upper = line.uppercased()
+        if upper.contains("ERROR") || upper.contains("WARNING") || upper.contains("FATAL") || upper.contains("Traceback") {
+            DiagnosticLog.log("Python: \(line)")
+        }
+
         switch event {
         case .bridgeReady:
             NSLog("[Whisperer-PY] Bridge ready — setting status to .idle")
@@ -328,6 +360,7 @@ final class PythonSubprocessManager {
 
         case .error(let title, let message):
             NSLog("[Whisperer-PY] ERROR: %@: %@", title, message)
+            DiagnosticLog.log("Python ERROR: \(title): \(message)")
             DispatchQueue.main.async {
                 self.appState.status = .error("\(title): \(message)")
             }
@@ -372,6 +405,9 @@ final class PythonSubprocessManager {
 
         if count >= maxCrashes {
             DiagnosticLog.log("Too many crashes (\(count) in \(Int(crashWindowSeconds))s) — NOT restarting")
+            // Clear cached Python path so it's re-detected on next restart
+            UserDefaults.standard.removeObject(forKey: "pythonPath")
+            DiagnosticLog.log("Cleared cached pythonPath — will re-detect on next launch")
             DispatchQueue.main.async {
                 self.appState.status = .error("Python bridge crashed repeatedly")
             }
