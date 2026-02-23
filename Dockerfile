@@ -8,8 +8,10 @@ RUN apt-get update && \
 # Install Claude Code globally
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create non-root user (required for --dangerously-skip-permissions)
-RUN useradd -m -s /bin/bash claude
+# Create non-root user with configurable UID to match host (default 501 for macOS)
+ARG USER_UID=501
+RUN useradd -m -s /bin/bash -u ${USER_UID} claude
+
 USER claude
 
 WORKDIR /app
